@@ -1,0 +1,177 @@
+"""
+Reasoning Module for AVARIS
+Provides AI-powered explanations for anomalies, risks, and food allergen analysis using Gemini
+"""
+
+import logging
+from typing import List, Optional
+from backend.ai_engine.text_analyzer import generate_ai_text
+
+logger = logging.getLogger(__name__)
+
+def explain_anomaly(temperature: float, humidity: float, dust: float) -> str:
+    """
+    Generate an AI explanation for a detected anomaly based on sensor readings.
+    """
+    prompt = f"""
+    You are AVARIS, an AI Environmental Risk Monitor. 
+    An anomaly was detected with the following indoor environmental readings:
+    - Temperature: {temperature} °C
+    - Humidity: {humidity} %
+    - Dust Level: {dust} μg/m³
+    
+    Please provide:
+    1. A brief explanation of why these readings are anomalous.
+    2. A list of recommended safety actions using bullet points.
+    
+    IMPORTANT: Use Markdown bolding (**text**) for the most critical info. 
+    DONT clump text into a single paragraph; use clear spacing and bullet points (* point) for readability.
+    Keep it concise and actionable.
+    """
+    
+    try:
+        return generate_ai_text(prompt)
+    except Exception as e:
+        logger.error(f"Error generating anomaly explanation: {e}")
+        return _fallback_explain_anomaly(temperature, humidity, dust)
+
+def explain_risk(risk_level: str, temperature: float, humidity: float, dust: float) -> str:
+    """
+    Generate an AI explanation for high/critical risk levels.
+    """
+    prompt = f"""
+    You are AVARIS, an AI Environmental Risk Monitor. 
+    The current environment risk level is {risk_level}.
+    Current readings:
+    - Temperature: {temperature} °C
+    - Humidity: {humidity} %
+    - Dust Level: {dust} μg/m³
+    
+    Please provide:
+    1. A brief explanation of the primary risk factor.
+    2. A list of recommended actions to mitigate the risk immediately using bullet points.
+    
+    IMPORTANT: Use Markdown bolding (**text**) for the most critical info.
+    DONT clump text into a single paragraph; use clear spacing and bullet points (* point) for readability.
+    Keep it concise and actionable.
+    """
+    
+    try:
+        return generate_ai_text(prompt)
+    except Exception as e:
+        logger.error(f"Error generating risk explanation: {e}")
+        return _fallback_explain_risk(risk_level, temperature, humidity, dust)
+
+def explain_food_risk(food_item: str, ingredients: list, detected_allergens: list, risk_level: str) -> str:
+    """
+    Generate an AI explanation for food allergen risks.
+    """
+    allergen_text = ', '.join(detected_allergens) if detected_allergens else 'None'
+    ingredient_text = ', '.join(ingredients) if ingredients else 'Unknown'
+    
+    prompt = f"""
+    You are AVARIS, an AI Environmental and Health Risk Monitor.
+    Analyze this food report:
+    - Food Item: {food_item}
+    - Ingredients: {ingredient_text}
+    - Detected Allergens: {allergen_text}
+    - Risk Level: {risk_level}
+    
+    The user may be allergic to the detected allergens.
+    Generate a clear, helpful safety explanation. 
+    Explain why it's a risk (if any) and provide a list of actions the user should take.
+    
+    IMPORTANT: Use Markdown bolding (**text**) for critical info and detected allergens.
+    DONT clump text into a single paragraph; use clear spacing and bullet points (* point) for readability.
+    Keep it concise and actionable.
+    """
+    
+    try:
+        return generate_ai_text(prompt)
+    except Exception as e:
+        logger.error(f"Error generating food risk explanation: {e}")
+        return _fallback_explain_food_risk(food_item, ingredients, detected_allergens, risk_level)
+
+# Fallback explanations (used when Gemini is unavailable)
+
+def _fallback_explain_anomaly(temperature: float, humidity: float, dust: float) -> str:
+    """Fallback explanation for anomalies"""
+    explanations = []
+    
+    if temperature > 30:
+        explanations.append(f"High temperature ({temperature}°C) detected")
+    elif temperature < 15:
+        explanations.append(f"Low temperature ({temperature}°C) detected")
+    
+    if humidity > 70:
+        explanations.append(f"High humidity ({humidity}%) detected")
+    elif humidity < 30:
+        explanations.append(f"Low humidity ({humidity}%) detected")
+    
+    if dust > 50:
+        explanations.append(f"High dust levels ({dust} μg/m³) detected")
+    
+    if not explanations:
+        explanations.append("Environmental readings are outside normal parameters")
+    
+    explanation_text = "\n".join([f"* {e}" for e in explanations])
+    return f"[Rule-Based Analysis]\n{explanation_text}\n\n**Recommended actions:**\n* Check ventilation systems\n* Inspect air filters immediately"
+
+def _fallback_explain_risk(risk_level: str, temperature: float, humidity: float, dust: float) -> str:
+    """Fallback explanation for risk levels"""
+    risk_factors = []
+    
+    if temperature > 35 or temperature < 10:
+        risk_factors.append("extreme temperature")
+    if humidity > 80 or humidity < 20:
+        risk_factors.append("extreme humidity")
+    if dust > 75:
+        risk_factors.append("high particulate matter")
+    
+    if risk_factors:
+        primary_risk = ", ".join(risk_factors)
+        explanation = f"Risk level {risk_level} due to {primary_risk}"
+    else:
+        explanation = f"Risk level {risk_level} detected based on environmental conditions"
+    
+    recommendations = []
+    if temperature > 35:
+        recommendations.append("improve cooling/ventilation")
+    elif temperature < 10:
+        recommendations.append("check heating systems")
+    
+    if humidity > 80:
+        recommendations.append("use dehumidifiers")
+    elif humidity < 20:
+        recommendations.append("increase humidity levels")
+    
+    if dust > 75:
+        recommendations.append("replace air filters and improve ventilation")
+    
+    if not recommendations:
+        recommendations.append("monitor conditions closely and follow safety protocols")
+    
+    action_text = "\n".join([f"* {r}" for r in recommendations])
+    return f"[Rule-Based Analysis]\n{explanation}\n\n**Immediate actions:**\n{action_text}"
+
+def _fallback_explain_food_risk(food_item: str, ingredients: list, detected_allergens: list, risk_level: str) -> str:
+    """Fallback explanation for food risks"""
+    if not detected_allergens:
+        return f"No allergens detected in {food_item}. This food appears safe based on the identified ingredients: {', '.join(ingredients)}."
+    
+    allergen_list = ', '.join(detected_allergens)
+    
+    if risk_level == "HIGH":
+        risk_explanation = f"**HIGH RISK**: Multiple allergens ({allergen_list}) detected in {food_item}"
+        actions = ["**AVOID this food completely.**", "Seek immediate medical attention if consumed"]
+    elif risk_level == "MEDIUM":
+        risk_explanation = f"**MEDIUM RISK**: Allergen ({allergen_list}) detected in {food_item}"
+        actions = ["**Exercise caution.**", "Avoid if you have known allergies to these ingredients"]
+    else:
+        risk_explanation = f"**LOW RISK**: Potential allergen traces in {food_item}"
+        actions = ["Monitor for any allergic reactions if consumed"]
+    
+    action_text = "\n".join([f"* {a}" for a in actions])
+    ingredient_info = f"Detected ingredients: {', '.join(ingredients)}"
+    
+    return f"[Rule-Based Analysis]\n{risk_explanation}\n{ingredient_info}\n\n**Recommendations:**\n{action_text}"
