@@ -24,7 +24,7 @@ class GeminiTextAnalyzer:
     def _configure_gemini(self):
         """Configure Gemini API"""
         # Try hardcoded key first (for development)
-        hardcoded_key = "AIzaSyDRRwLOGsUcWC6wkiWBW7DcQVLlGLRJlaw"
+        hardcoded_key = "AIzaSyA9hoWKbvTtAAef0pGZTsxE4OAbakwCP84"
         
         api_key = None
         if hardcoded_key and hardcoded_key not in ["", "YOUR_API_KEY_HERE"]:
@@ -38,7 +38,7 @@ class GeminiTextAnalyzer:
         if api_key:
             try:
                 genai.configure(api_key=api_key)
-                self.model = genai.GenerativeModel('gemini-3-flash')
+                self.model = genai.GenerativeModel('gemini-2.5-flash')
                 logger.info("Gemini text analyzer configured successfully")
             except Exception as e:
                 logger.error(f"Failed to configure Gemini: {e}")

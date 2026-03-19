@@ -26,7 +26,7 @@ class GeminiVisionAnalyzer:
     def _configure_gemini(self):
         """Configure Gemini Vision API"""
         # Try hardcoded key first (for development)
-        hardcoded_key = "AIzaSyAq640Sz4QZJnkP4C3Ue9PL1qwow26LTx4"
+        hardcoded_key = "AIzaSyC_LQpcT5r7F7dYqWkiKuhesSpYKwQhAuw"
         
         api_key = None
         if hardcoded_key and hardcoded_key not in ["", "YOUR_API_KEY_HERE"]:
@@ -77,26 +77,21 @@ class GeminiVisionAnalyzer:
             Analyze this food image carefully and provide detailed information.
 
             Your task:
-            1. Identify the main food item(s) in the image
-            2. List ALL visible ingredients you can see
-            3. List common hidden ingredients typically found in this type of food
-            4. Provide a confidence score (0.0 to 1.0) for your identification
+            1. Identify the exact food item or product in the image.
+            2. List ONLY the actual ingredients that make up the food shown. If it is a raw, single-ingredient food (like a raw vegetable, fruit, or plain meat), the ONLY ingredient should be the item itself. 
+            3. Do NOT list items that are "commonly paired with" or "cooked with" this item unless you visually confirm their presence (e.g., do not list cheese or meat for plain bell peppers).
+            4. Provide a confidence score (0.0 to 1.0) for your identification.
 
-            IMPORTANT: Be thorough with ingredients. Include:
-            - Base ingredients (flour, rice, meat, etc.)
-            - Dairy products (milk, cheese, butter, cream)
-            - Common allergens (nuts, eggs, soy, wheat, fish, shellfish)
-            - Seasonings and additives if visible
-            - Cooking oils or fats
+            IMPORTANT: 
+            - If it's a prepared dish or packaged food, list its expected base ingredients (flour, dairy, common allergens).
+            - Do NOT hallucinate ingredients that are not part of the core food shown.
 
             Return your response in this EXACT JSON format:
             {
                 "food_item": "name of the food",
-                "ingredients": ["ingredient1", "ingredient2", "ingredient3"],
+                "ingredients": ["ingredient1", "ingredient2"],
                 "confidence": 0.95
             }
-
-            Be specific and comprehensive with ingredients. If you see cheese, specify it. If you see bread, include wheat/flour.
             """
             
             # Generate content with image
@@ -106,9 +101,9 @@ class GeminiVisionAnalyzer:
             text_response = response.text.strip()
             
             # Clean up markdown formatting if present
-            if text_response.startswith("```json"):
+            if "```json" in text_response:
                 text_response = text_response.split("```json")[1].split("```")[0].strip()
-            elif text_response.startswith("```"):
+            elif "```" in text_response:
                 text_response = text_response.split("```")[1].split("```")[0].strip()
             
             # Parse JSON
@@ -125,8 +120,82 @@ class GeminiVisionAnalyzer:
             
         except Exception as e:
             logger.error(f"Error analyzing food image with Gemini Vision: {e}")
-            raise  # Re-raise so routes.py can catch it and use fallback
-    
+    def analyze_prescription(self, image_path: str) -> list:
+        """
+        Analyze medical prescription or allergy test image using Gemini Vision API
+        
+        Args:
+            image_path (str): Path to the medical document image
+            
+        Returns:
+            list: Array of strings representing extracted allergens
+        """
+        model = self.model
+        if model is None:
+            logger.error("Gemini Vision not configured")
+            raise RuntimeError("Gemini Vision API not configured. Please set GEMINI_API_KEY.")
+            
+        try:
+            # Load image
+            img = Image.open(image_path)
+            
+            # Create detailed prompt for medical document analysis
+            prompt = """
+            You are a medical document reading AI. Carefully analyze this image of a medical prescription, doctor's note, or allergy test report.
+            
+            Find any explicit mention of allergies or hypersensitivities belonging to this patient.
+            Extract the exact allergens (e.g., "Penicillin", "Peanuts", "Dust mites", "Lactose").
+            
+            Return your response in this EXACT JSON format:
+            {
+                "extracted_allergens": ["Allergen 1", "Allergen 2"]
+            }
+            
+            If NO allergies are found in the document, return:
+            {
+                "extracted_allergens": []
+            }
+            """
+            
+            response = model.generate_content([prompt, img])
+            text_response = response.text.strip()
+            
+            # Clean up markdown formatting if present
+            if "```json" in text_response:
+                text_response = text_response.split("```json")[1].split("```")[0].strip()
+            elif "```" in text_response:
+                text_response = text_response.split("```")[1].split("```")[0].strip()
+                
+            result = json.loads(text_response)
+            extracted = result.get("extracted_allergens", [])
+            
+            if not isinstance(extracted, list):
+                 logger.warning(f"Extracted allergens is not a list: {extracted}")
+                 extracted = []
+                 
+            # Enforce string type to prevent frontend crashes (e.g., .toLowerCase() on non-strings)
+            cleaned_extracted = []
+            for item in extracted:
+                if isinstance(item, str):
+                    cleaned_extracted.append(item)
+                elif isinstance(item, dict):
+                    # Fallback for structured AI responses
+                    val = item.get("allergen") or item.get("name") or str(item)
+                    cleaned_extracted.append(str(val))
+                else:
+                    cleaned_extracted.append(str(item))
+            
+            logger.info(f"Gemini Vision Medical Analysis: extracted {len(cleaned_extracted)} allergens")
+            return cleaned_extracted
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse medical analysis response as JSON: {e}")
+            raise RuntimeError(f"Failed to parse medical analysis: {e}")
+            
+        except Exception as e:
+            logger.error(f"Error analyzing medical document with Gemini Vision: {e}")
+            raise
+
     def is_available(self) -> bool:
         """Check if Gemini Vision is available"""
         return self.model is not None
@@ -144,12 +213,13 @@ def get_vision_analyzer() -> GeminiVisionAnalyzer:
 def analyze_food_image(image_path: str) -> dict:
     """
     Convenience function to analyze food image
-    
-    Args:
-        image_path (str): Path to the food image
-        
-    Returns:
-        dict: Analysis result with food_item, ingredients, and confidence
     """
     analyzer = get_vision_analyzer()
     return analyzer.analyze_food_image(image_path)
+
+def analyze_prescription_image(image_path: str) -> list:
+    """
+    Convenience function to analyze prescription image
+    """
+    analyzer = get_vision_analyzer()
+    return analyzer.analyze_prescription(image_path)

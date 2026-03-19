@@ -62,28 +62,27 @@ def explain_risk(risk_level: str, temperature: float, humidity: float, dust: flo
         logger.error(f"Error generating risk explanation: {e}")
         return _fallback_explain_risk(risk_level, temperature, humidity, dust)
 
-def explain_food_risk(food_item: str, ingredients: list, detected_allergens: list, risk_level: str) -> str:
+def explain_food_risk(food_item: str, ingredients: list, detected_allergens: list, risk_level: str, user_allergies: list = None) -> str:
     """
-    Generate an AI explanation for food allergen risks.
+    Generate an AI explanation for food allergen risks natively comparing against user's profile.
     """
     allergen_text = ', '.join(detected_allergens) if detected_allergens else 'None'
     ingredient_text = ', '.join(ingredients) if ingredients else 'Unknown'
+    user_allergy_text = ', '.join(user_allergies) if user_allergies else 'None specified'
     
     prompt = f"""
     You are AVARIS, an AI Environmental and Health Risk Monitor.
     Analyze this food report:
     - Food Item: {food_item}
     - Ingredients: {ingredient_text}
-    - Detected Allergens: {allergen_text}
-    - Risk Level: {risk_level}
+    - Detected Broad Allergens: {allergen_text}
+    - User's Custom Allergies: {user_allergy_text}
+    - Base Risk Level: {risk_level}
     
-    The user may be allergic to the detected allergens.
-    Generate a clear, helpful safety explanation. 
-    Explain why it's a risk (if any) and provide a list of actions the user should take.
-    
-    IMPORTANT: Use Markdown bolding (**text**) for critical info and detected allergens.
-    DONT clump text into a single paragraph; use clear spacing and bullet points (* point) for readability.
-    Keep it concise and actionable.
+    CRITICAL RULES:
+    1. If ANY of the "User's Custom Allergies" appear in the Food Item or Ingredients, you MUST override the Base Risk Level, state that there is a **SEVERE PERSONAL RISK**, and explicitly tell the user to AVOID consumption.
+    2. If the user has Custom Allergies but none are present in the food, emphasize that the food is SAFE based on their personal profile.
+    3. Keep the report brief, highly actionable, and avoid clumping text. Use bullet points (*) and bolding (**text**) for readability.
     """
     
     try:

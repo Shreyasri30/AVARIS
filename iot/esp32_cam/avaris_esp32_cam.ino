@@ -3,8 +3,8 @@
 #include "esp_http_server.h"
 
 // --- Configuration ---
-const char* ssid = "Ganeshgj";
-const char* password = "shawn123";
+const char* ssid = "Niya";
+const char* password = "RajeshNiya@999";
 
 // STATIC IP CONFIGURATION
 IPAddress local_IP(192, 168, 1, 40);
@@ -56,6 +56,8 @@ esp_err_t stream_handler(httpd_req_t *req){
   res = httpd_resp_set_type(req, _STREAM_CONTENT_TYPE);
   if(res != ESP_OK) return res;
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "GET, OPTIONS");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "*");
 
   while(true){
     // DUAL-PORT HARD SILENCE: Stream is on Port 81.
@@ -148,16 +150,17 @@ void startCameraServer(){
   config_api.ctrl_port = 32768; // Must be unique for multiple servers
   config_api.max_open_sockets = 1;       
   config_api.lru_purge_enable = true;    
+  config_api.uri_match_fn = httpd_uri_match_wildcard; // Allows query params like ?t=123
 
   httpd_uri_t capture_uri = {
-    .uri       = "/capture",
+    .uri       = "/capture*",
     .method    = HTTP_GET,
     .handler   = capture_handler,
     .user_ctx  = NULL
   };
 
   httpd_uri_t ping_uri = {
-    .uri       = "/ping",
+    .uri       = "/ping*",
     .method    = HTTP_GET,
     .handler   = ping_handler,
     .user_ctx  = NULL
@@ -174,9 +177,10 @@ void startCameraServer(){
   config_stream.ctrl_port = 32769; // Must be unique
   config_stream.max_open_sockets = 1;
   config_stream.lru_purge_enable = true;
+  config_stream.uri_match_fn = httpd_uri_match_wildcard; // Allows query params for stream too
 
   httpd_uri_t stream_uri = {
-    .uri       = "/stream",
+    .uri       = "/stream*",
     .method    = HTTP_GET,
     .handler   = stream_handler,
     .user_ctx  = NULL

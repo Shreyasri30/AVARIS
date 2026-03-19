@@ -37,17 +37,17 @@ function formatMarkdown(text) {
 // ─── Root App ──────────────────────────────────────────────────────────────
 
 function App() {
-  const [sensorData, setSensorData]     = useState({ temperature: 0, humidity: 0, dust: 0 });
-  const [riskData, setRiskData]         = useState({ risk_level: 'LOADING', confidence: 0 });
-  const [forecast, setForecast]         = useState(null);
-  const [loading, setLoading]           = useState(true);
-  const [showCamera, setShowCamera]     = useState(false);
-  const [foodResult, setFoodResult]     = useState(null);
+  const [sensorData, setSensorData] = useState({ temperature: 0, humidity: 0, dust: 0 });
+  const [riskData, setRiskData] = useState({ risk_level: 'LOADING', confidence: 0 });
+  const [forecast, setForecast] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showCamera, setShowCamera] = useState(false);
+  const [foodResult, setFoodResult] = useState(null);
   const [systemOnline, setSystemOnline] = useState(false);
-  const [showAuth, setShowAuth]         = useState(false);
-  const [currentUser, setCurrentUser]   = useState(getUser());
+  const [showAuth, setShowAuth] = useState(false);
+  const [currentUser, setCurrentUser] = useState(getUser());
   const [userAllergies, setUserAllergies] = useState(getAllergies());
-  const [heroFile, setHeroFile]         = useState(null);
+  const [heroFile, setHeroFile] = useState(null);
   const heroFileRef = useRef(null);
 
   const fetchData = async () => {
@@ -230,6 +230,7 @@ function App() {
         cameraResult={foodResult}
         onResultUpdate={setFoodResult}
         userAllergies={userAllergies}
+        currentUser={currentUser}
         heroFile={heroFile}
         clearHeroFile={() => setHeroFile(null)}
       />
@@ -247,6 +248,8 @@ function App() {
       {/* ── Floating Modals ────────────────────────────── */}
       {showCamera && (
         <CameraPanel
+          currentUser={currentUser}
+          userAllergies={userAllergies}
           onClose={() => setShowCamera(false)}
           onCapture={(data) => { setFoodResult(data); setShowCamera(false); }}
         />
@@ -296,8 +299,8 @@ function SensorCard({ title, value, unit, icon, trend }) {
 
 function EnvironmentAnalysisPanel() {
   const [analysis, setAnalysis] = useState(null);
-  const [loading, setLoading]   = useState(false);
-  const [error, setError]       = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   const handleAnalyze = async () => {
     setLoading(true);
@@ -349,11 +352,11 @@ function EnvironmentAnalysisPanel() {
 
 // ─── Food Analysis Panel ───────────────────────────────────────────────────
 
-function FoodAnalysisPanel({ cameraResult, onResultUpdate, userAllergies, heroFile, clearHeroFile }) {
-  const [file, setFile]       = useState(null);
-  const [result, setResult]   = useState(null);
+function FoodAnalysisPanel({ cameraResult, onResultUpdate, userAllergies, currentUser, heroFile, clearHeroFile }) {
+  const [file, setFile] = useState(null);
+  const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState(null);
+  const [error, setError] = useState(null);
 
   // When heroFile is passed from the hero upload button, auto-populate local file state
   useEffect(() => {
@@ -365,7 +368,7 @@ function FoodAnalysisPanel({ cameraResult, onResultUpdate, userAllergies, heroFi
     fetch(`${API_BASE}/latest-food-analysis`)
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data) { setResult(data); onResultUpdate(data); } })
-      .catch(() => {});
+      .catch(() => { });
   }, [cameraResult]);
 
   const handleUpload = async () => {
@@ -373,6 +376,9 @@ function FoodAnalysisPanel({ cameraResult, onResultUpdate, userAllergies, heroFi
     setLoading(true); setError(null);
     const form = new FormData();
     form.append('image', file);
+    if (currentUser && userAllergies.length > 0) {
+      form.append('user_allergies', JSON.stringify(userAllergies));
+    }
     try {
       const res = await fetch(`${API_BASE}/upload-food-image`, { method: 'POST', body: form });
       if (!res.ok) throw new Error(await res.text());
@@ -385,11 +391,35 @@ function FoodAnalysisPanel({ cameraResult, onResultUpdate, userAllergies, heroFi
     }
   };
 
-  // Merge detected allergens with user's personal allergens
+  // Merge globally detected allergens, food name, and specific ingredients with user's personal allergies
   const personalHits = result
-    ? (result.detected_allergens || []).filter(a =>
-        userAllergies.some(ua => ua.toLowerCase() === a.toLowerCase())
-      )
+    ? (() => {
+        const hits = new Set();
+        const profile = userAllergies.map(a => a.toLowerCase());
+        
+        // 1. Check against backend FDA allergens
+        (result.detected_allergens || []).forEach(a => {
+          if (profile.includes(a.toLowerCase())) hits.add(a);
+        });
+        
+        // 2. Check directly against exact ingredients
+        (result.ingredients || []).forEach(ing => {
+          const ingLower = ing.toLowerCase();
+          userAllergies.forEach(ua => {
+            if (ingLower.includes(ua.toLowerCase())) hits.add(ua);
+          });
+        });
+        
+        // 3. Check directly against food item name
+        if (result.food_item) {
+          const foodLower = result.food_item.toLowerCase();
+          userAllergies.forEach(ua => {
+            if (foodLower.includes(ua.toLowerCase())) hits.add(ua);
+          });
+        }
+        
+        return Array.from(hits);
+      })()
     : [];
 
   return (
@@ -420,10 +450,17 @@ function FoodAnalysisPanel({ cameraResult, onResultUpdate, userAllergies, heroFi
           <div className="details">
             <h3>{result.food_item}</h3>
 
-            {personalHits.length > 0 && (
+            { personalHits.length > 0 && (
               <div className="personal-alert">
                 <AlertTriangle size={15} />
                 <strong>Personal Allergen Alert:</strong> This product contains {personalHits.join(', ')} — which match your allergy profile.
+              </div>
+            )}
+
+            { currentUser && personalHits.length === 0 && (result.detected_allergens || []).length > 0 && (
+              <div className="safe-alert" style={{ backgroundColor: 'rgba(34, 197, 94, 0.1)', color: '#22c55e', padding: '10px', borderRadius: '8px', marginTop: '10px' }}>
+                <ShieldAlert size={15} style={{ display: 'inline', marginRight: '5px' }} />
+                <strong>Safe based on your profile:</strong> This product contains allergens, but none that match your personal allergy profile.
               </div>
             )}
 
@@ -432,23 +469,31 @@ function FoodAnalysisPanel({ cameraResult, onResultUpdate, userAllergies, heroFi
               {(result.ingredients || []).map((ing, i) => <span key={i} className="tag">{ing}</span>)}
             </div>
 
-            {result.detected_allergens?.length > 0 && (
-              <>
-                <h5><AlertTriangle size={13} /> Allergens Detected</h5>
-                <div className="tags">
-                  {result.detected_allergens.map((alg, i) => (
-                    <span key={i} className={`tag allergen-tag ${personalHits.includes(alg) ? 'personal-allergen' : ''}`}>
-                      {alg}
-                    </span>
-                  ))}
-                </div>
-              </>
-            )}
+            {(() => {
+              const displayAllergens = currentUser ? personalHits : (result.detected_allergens || []);
+              if (displayAllergens.length > 0) {
+                return (
+                  <>
+                    <h5><AlertTriangle size={13} /> {currentUser ? 'Your Allergen Risks' : 'Allergens Detected'}</h5>
+                    <div className="tags">
+                      {displayAllergens.map((alg, i) => (
+                        <span key={i} className={`tag allergen-tag ${currentUser ? 'personal-allergen' : ''}`}>
+                          {alg}
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                );
+              }
+              return null;
+            })()}
 
-            <div className="ai-report">
-              <h5>Safety Guidance</h5>
-              <div dangerouslySetInnerHTML={{ __html: formatMarkdown(result.ai_explanation) }} />
-            </div>
+            {!(currentUser && personalHits.length === 0 && (result.detected_allergens || []).length > 0) && (
+              <div className="ai-report">
+                <h5>Safety Guidance</h5>
+                <div dangerouslySetInnerHTML={{ __html: formatMarkdown(result.ai_explanation) }} />
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -458,18 +503,27 @@ function FoodAnalysisPanel({ cameraResult, onResultUpdate, userAllergies, heroFi
 
 // ─── Camera Panel ──────────────────────────────────────────────────────────
 
-function CameraPanel({ onClose, onCapture }) {
+function CameraPanel({ onClose, onCapture, currentUser, userAllergies }) {
   const [status, setStatus] = useState('connecting');
-  const [stage, setStage]   = useState('');
-  const [error, setError]   = useState(null);
+  const [stage, setStage] = useState('');
+  const [error, setError] = useState(null);
   const imgRef = useRef(null);
+  const [streamUrl] = useState(`http://${ESP32_CAM_IP}:81/stream?t=${Date.now()}`);
 
   const startCapture = async () => {
     setStatus('processing');
     setStage('Capturing frame...');
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/capture-and-analyze`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({cam_ip: ESP32_CAM_IP}) });
+      const payload = {
+        cam_ip: ESP32_CAM_IP,
+        user_allergies: currentUser ? userAllergies : []
+      };
+      const res = await fetch(`${API_BASE}/capture-and-analyze`, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify(payload) 
+      });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       setStage('Analysis complete');
@@ -493,7 +547,7 @@ function CameraPanel({ onClose, onCapture }) {
         <div className="camera-stream-container">
           <img
             ref={imgRef}
-            src={`http://${ESP32_CAM_IP}/stream`}
+            src={streamUrl}
             className={`live-feed${status === 'processing' ? ' processing' : ''}`}
             onLoad={() => { if (status === 'connecting') setStatus('live'); }}
             onError={() => setError('Cannot reach ESP32-CAM at ' + ESP32_CAM_IP)}

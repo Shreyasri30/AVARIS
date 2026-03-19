@@ -4,14 +4,19 @@
 
 // --- Configuration ---
 // Replace with your Network credentials
-const char* ssid = "Ganeshgj";
-const char* password = "shawn123";
+const char* ssid = "Niya";
+const char* password = "RajeshNiya@999";
 
 // Replace with your Computer's IP address (find it using 'ipconfig' on Windows)
-const char* serverUrl = "http://192.168.1.37:8000/api/sensor-data"; 
+const char* serverUrl = "http://192.168.1.6:8000/api/sensor-data"; 
 
 #define DHTPIN 4      // Digital pin connected to the DHT sensor
-#define DHTTYPE DHT22 // Set to DHT22 if you have that model
+
+// CRITICAL FIX: The most common cause for continuous DHT failure is the wrong sensor type. 
+// DHT11 = Blue sensor. DHT22 = White sensor. 
+// Changed to DHT11 as it's the most common module used. Change back to DHT22 if yours is specifically a white DHT22.
+#define DHTTYPE DHT22 
+
 DHT dht(DHTPIN, DHTTYPE);
 
 #define DUST_SENSOR_PIN 32 // Analog pin connected to the Dust sensor output
@@ -19,6 +24,8 @@ DHT dht(DHTPIN, DHTTYPE);
 
 // --- Variables ---
 float temp = 0, hum = 0, dustDensity = 0;
+float lastValidTemp = 0.0;
+float lastValidHum = 0.0;
 
 void setup() {
   Serial.begin(115200);
@@ -59,40 +66,47 @@ void loop() {
   if (dustDensity < 0) dustDensity = 0;
 
   if (isnan(hum) || isnan(temp)) {
-    Serial.println("Failed to read from DHT sensor!");
+    Serial.println("Failed to read from DHT sensor! (Check if sensor type is DHT11 or DHT22, or wiring)");
+    // Fallback to last valid readings so we don't send NaNs and can still send Dust data
+    hum = lastValidHum;
+    temp = lastValidTemp;
   } else {
+    // Update last valid readings
+    lastValidHum = hum;
+    lastValidTemp = temp;
     Serial.print("Temp: "); Serial.print(temp); Serial.print("°C | ");
     Serial.print("Hum: "); Serial.print(hum); Serial.print("% | ");
     Serial.print("Dust: "); Serial.print(dustDensity); Serial.println(" ug/m3");
+  }
 
-    // 3. Send to Backend
-    if (WiFi.status() == WL_CONNECTED) {
-      HTTPClient http;
-      http.begin(serverUrl);
-      http.setTimeout(10000); // Wait up to 10 seconds for a response
-      http.addHeader("Content-Type", "application/json");
+  // 3. Send to Backend (Moved OUTSIDE the DHT success check so dust data still sends even if DHT occasionally fails)
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin(serverUrl);
+    http.setTimeout(10000); // Wait up to 10 seconds for a response
+    http.addHeader("Content-Type", "application/json");
 
-      // Construct JSON payload
-      String jsonPayload = "{\"temperature\": " + String(temp, 2) + 
-                           ", \"humidity\": " + String(hum, 1) + 
-                           ", \"dust\": " + String(dustDensity, 1) + "}";
+    // Construct JSON payload
+    String jsonPayload = "{\"temperature\": " + String(temp, 2) + 
+                         ", \"humidity\": " + String(hum, 1) + 
+                         ", \"dust\": " + String(dustDensity, 1) + "}";
 
-      Serial.print("Sending payload: ");
-      Serial.println(jsonPayload);
+    Serial.print("Sending payload: ");
+    Serial.println(jsonPayload);
 
-      int httpResponseCode = http.POST(jsonPayload);
-      
-      if (httpResponseCode > 0) {
-        Serial.print("Backend Response: ");
-        Serial.println(httpResponseCode);
-        String response = http.getString();
-        Serial.println(response);
-      } else {
-        Serial.print("Error sending POST: ");
-        Serial.println(httpResponseCode);
-      }
-      http.end();
+    int httpResponseCode = http.POST(jsonPayload);
+    
+    if (httpResponseCode > 0) {
+      Serial.print("Backend Response ");
+      Serial.print(httpResponseCode);
+      Serial.print(": ");
+      String response = http.getString();
+      Serial.println(response);
+    } else {
+      Serial.print("Error sending POST: ");
+      Serial.println(httpResponseCode);
     }
+    http.end();
   }
 
   delay(5000); // Send data every 5 seconds

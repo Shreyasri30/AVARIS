@@ -8,7 +8,7 @@ import joblib
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
@@ -203,7 +203,48 @@ def get_forecast(db: Session = Depends(get_db)):
         "forecast_time_mins": 30
     }
 
-def process_food_analysis(db: Session, file_path: str, filename: str):
+@router.post("/analyze-environment")
+def analyze_environment(db: Session = Depends(get_db)):
+    """Generate an on-demand AI analysis report for the current environment."""
+    latest_sensor = db.query(SensorData).order_by(SensorData.timestamp.desc()).first()
+    if not latest_sensor:
+        raise HTTPException(status_code=404, detail="No sensor data available to analyze.")
+        
+    latest_risk = db.query(RiskPrediction).order_by(RiskPrediction.timestamp.desc()).first()
+    risk_level = latest_risk.risk_level if latest_risk else "UNKNOWN"
+    
+    prompt = f"""
+    You are AVARIS, an advanced environmental AI monitor. 
+    Analyze the following real-time room conditions and provide a concise, professional 2-paragraph safety report.
+    Use markdown for formatting. Make intelligent connections between the elements.
+    
+    Data:
+    - Temperature: {latest_sensor.temperature:.1f}°C
+    - Humidity: {latest_sensor.humidity:.1f}%
+    - Particulate Matter (Dust): {latest_sensor.dust:.1f} µg/m³
+    - Overall System Risk Level: {risk_level}
+    
+    Do not repeat the numbers like a robot. Speak intelligently about what these numbers mean for human comfort and safety (e.g., mold risk from humidity, thermal comfort, air purity).
+    """
+    
+    from backend.ai_engine.text_analyzer import generate_ai_text
+    try:
+        report = generate_ai_text(prompt)
+    except Exception as e:
+        logger.error(f"Failed to generate text analysis: {e}")
+        report = f"AI analysis temporarily unavailable due to an internal error: {e}"
+        
+    return {
+        "sensor_data": {
+            "temperature": latest_sensor.temperature,
+            "humidity": latest_sensor.humidity,
+            "dust": latest_sensor.dust
+        },
+        "risk_level": risk_level,
+        "analysis": report
+    }
+
+def process_food_analysis(db: Session, file_path: str, filename: str, user_allergies: list = None):
     """Helper to run ingredient analysis, allergen check, and logging."""
     try:
         # 2. Analyze Image (Only if in FOOD mode)
@@ -223,11 +264,21 @@ def process_food_analysis(db: Session, file_path: str, filename: str):
                 
                 logger.info(f"Analysis complete - Food: {food_item}, Ingredients: {ingredients}")
                 
-                # 3. Check for Allergens
+                # 3. Check for Standard Allergens
                 detected_allergens, risk_level = check_ingredients_for_allergens(ingredients)
                 
-                # 4. Generate AI Explanation
-                ai_explanation = explain_food_risk(food_item, ingredients, detected_allergens, risk_level)
+                # 3.5. Inject Custom User Allergies
+                if user_allergies:
+                    for ua in user_allergies:
+                        ua_lower = ua.lower()
+                        # Check against ingredients and food_item
+                        if any(ua_lower in ing.lower() for ing in ingredients) or (ua_lower in food_item.lower()):
+                            if ua not in detected_allergens:
+                                detected_allergens.append(ua)
+                            risk_level = "HIGH"
+                
+                # 4. Generate Personalized AI Explanation
+                ai_explanation = explain_food_risk(food_item, ingredients, detected_allergens, risk_level, user_allergies)
             else:
                 # Mode is ENVIRONMENT, so skip AI analysis
                 food_item = "Image Analysis Skipped"
@@ -289,6 +340,7 @@ async def capture_and_analyze(data: dict, db: Session = Depends(get_db)):
     """Fetch image from ESP32-CAM, save it, and analyze."""
     try:
         cam_ip = data.get("cam_ip")
+        user_allergies = data.get("user_allergies", [])
         if not cam_ip:
             raise HTTPException(status_code=400, detail="Camera IP is required")
             
@@ -315,8 +367,10 @@ async def capture_and_analyze(data: dict, db: Session = Depends(get_db)):
             logger.error(f"Camera network check: FAILED (Unreachable). Error: {e}")
             raise HTTPException(status_code=504, detail=f"Could not reach ESP32-CAM at {cam_ip}. Is it powered on and connected to Wi-Fi? (Diagnostic: {type(e).__name__})")
 
-        # 2. Fetch from Camera (with Retry Logic)
-        cam_url = f"http://{cam_ip}/capture"
+        # 2. Fetch from Camera (with Retry Logic and Cache Busting)
+        # Bypassing cache by appending a random timestamp
+        timestamp_ms = int(time.time() * 1000)
+        cam_url = f"http://{cam_ip}/capture?_t={timestamp_ms}"
         logger.info(f"Triggering Single-Socket Force Capture from {cam_url}")
         
         max_retries = 3 # Increased retries
@@ -347,16 +401,25 @@ async def capture_and_analyze(data: dict, db: Session = Depends(get_db)):
             f.write(response.content)
             
         # 3. Process
-        return process_food_analysis(db, file_path, filename)
+        return process_food_analysis(db, file_path, filename, user_allergies)
         
     except requests.exceptions.RequestException as e:
         logger.error(f"Camera connection error: {e}")
         raise HTTPException(status_code=504, detail=f"Could not connect to ESP32-CAM at {cam_ip}. Please check the IP and Wi-Fi.")
 
 @router.post("/upload-food-image")
-async def upload_food_image(image: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_food_image(
+    image: UploadFile = File(...), 
+    user_allergies: str = Form("[]"),
+    db: Session = Depends(get_db)
+):
     """Upload food image, analyze for allergens using local Vision Transformer, and store result."""
     try:
+        try:
+            allergies_list = json.loads(user_allergies)
+        except Exception:
+            allergies_list = []
+            
         # 1. Save Image
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         filename = f"food_{timestamp}.jpg"
@@ -382,11 +445,20 @@ async def upload_food_image(image: UploadFile = File(...), db: Session = Depends
                 
                 logger.info(f"Analysis complete - Food: {food_item}, Ingredients: {ingredients}")
                 
-                # 3. Check for Allergens
+                # 3. Check for Standard Allergens
                 detected_allergens, risk_level = check_ingredients_for_allergens(ingredients)
                 
-                # 4. Generate AI Explanation
-                ai_explanation = explain_food_risk(food_item, ingredients, detected_allergens, risk_level)
+                # 3.5. Inject Custom User Allergies
+                if allergies_list:
+                    for ua in allergies_list:
+                        ua_lower = ua.lower()
+                        if any(ua_lower in ing.lower() for ing in ingredients) or (ua_lower in food_item.lower()):
+                            if ua not in detected_allergens:
+                                detected_allergens.append(ua)
+                            risk_level = "HIGH"
+                
+                # 4. Generate Personalized AI Explanation
+                ai_explanation = explain_food_risk(food_item, ingredients, detected_allergens, risk_level, allergies_list)
             else:
                 # Mode is ENVIRONMENT, so skip AI analysis
                 food_item = "Image Analysis Skipped"
@@ -445,6 +517,32 @@ async def upload_food_image(image: UploadFile = File(...), db: Session = Depends
         }
     except Exception as e:
         logger.error(f"Error in upload_food_image: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/upload-prescription")
+async def upload_prescription(image: UploadFile = File(...)):
+    """Upload prescription image and extract allergens."""
+    try:
+        # 1. Save Image
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        filename = f"prescription_{timestamp}.jpg"
+        upload_dir = "uploads/prescriptions"
+        os.makedirs(upload_dir, exist_ok=True)
+        file_path = os.path.join(upload_dir, filename)
+        
+        with open(file_path, "wb") as buffer:
+            buffer.write(await image.read())
+            
+        logger.info(f"Saved uploaded prescription to {file_path}")
+        
+        # 2. Analyze
+        from backend.ai_engine.gemini_vision import analyze_prescription_image
+        extracted_allergens = analyze_prescription_image(file_path)
+        
+        return {"extracted_allergens": extracted_allergens}
+        
+    except Exception as e:
+        logger.error(f"Error processing prescription: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/latest-food-analysis")

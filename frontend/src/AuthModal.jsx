@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, User, LogIn, UserPlus, Save, LogOut, ShieldCheck, Plus } from 'lucide-react';
+import { X, User, LogIn, UserPlus, Save, LogOut, ShieldCheck, Plus, Upload } from 'lucide-react';
 import { login, register, logout, getUser, saveAllergies } from './auth.js';
 
 const ALLERGY_PRESETS = [
@@ -18,6 +18,7 @@ export default function AuthModal({ onClose, onUserChange }) {
   const [error, setError]           = useState('');
   const [user, setUser]             = useState(getUser());
   const [savedMsg, setSavedMsg]     = useState('');
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     const u = getUser();
@@ -68,6 +69,50 @@ export default function AuthModal({ onClose, onUserChange }) {
     }, 2000);
   };
 
+  const handlePrescriptionUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    setSavedMsg('');
+    try {
+      const form = new FormData();
+      form.append('image', file);
+      
+      const API_BASE = 'http://127.0.0.1:8000/api';
+      const res = await fetch(`${API_BASE}/upload-prescription`, {
+        method: 'POST',
+        body: form
+      });
+      
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      const extracted = data.extracted_allergens || [];
+      
+      if (extracted.length > 0) {
+        setSelected(prev => {
+          const newSet = new Set([...prev]);
+          extracted.forEach(a => {
+            // Check for case-insensitive duplicates
+            const exists = Array.from(newSet).some(existing => existing.toLowerCase() === a.toLowerCase());
+            if (!exists) newSet.add(a);
+          });
+          return Array.from(newSet);
+        });
+        setSavedMsg(`Extracted ${extracted.length} allergens from your document!`);
+      } else {
+        setSavedMsg('No explicit allergens found in the document.');
+      }
+    } catch (err) {
+      console.error(err);
+      setSavedMsg('Failed to process prescription.');
+    } finally {
+      setIsUploading(false);
+      // reset file input
+      e.target.value = null;
+    }
+  };
+
   const handleLogout = () => {
     logout();
     setUser(null);
@@ -103,7 +148,37 @@ export default function AuthModal({ onClose, onUserChange }) {
 
             <div className="allergy-section">
               <h4>My Allergy Profile</h4>
-              <p className="auth-hint">Select from presets or type your own.</p>
+              <p className="auth-hint" style={{ marginBottom: '16px' }}>Auto-extract from a medical document or enter manually.</p>
+
+              {/* Smart Extract Button */}
+              <label 
+                className={`btn-secondary full-width ${isUploading ? 'disabled' : ''}`} 
+                style={{ 
+                  cursor: isUploading ? 'wait' : 'pointer', 
+                  display: 'flex', 
+                  justifyContent: 'center', 
+                  alignItems: 'center', 
+                  gap: '8px', 
+                  padding: '12px',
+                  borderRadius: '8px',
+                  border: '1px dashed var(--accent)',
+                  backgroundColor: 'rgba(99, 102, 241, 0.05)',
+                  color: 'var(--accent)',
+                  fontWeight: '600',
+                  transition: 'all 0.2s'
+                }}
+              >
+                {isUploading ? <span className="spinner" style={{width: 16, height: 16, borderWidth: 2, borderColor: 'var(--accent)', borderRightColor: 'transparent'}}></span> : <Upload size={16} />}
+                <span>{isUploading ? 'Scanning Document via AI...' : 'Smart Extract via Prescription'}</span>
+                <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handlePrescriptionUpload} disabled={isUploading} />
+              </label>
+
+              {/* Visual Divider */}
+              <div style={{ display: 'flex', alignItems: 'center', margin: '16px 0', opacity: 0.4 }}>
+                <hr style={{ flex: 1, border: 'none', borderTop: '1px solid currentColor' }} />
+                <span style={{ margin: '0 10px', fontSize: '11px', fontWeight: '600', letterSpacing: '0.5px' }}>OR MANUAL ENTRY</span>
+                <hr style={{ flex: 1, border: 'none', borderTop: '1px solid currentColor' }} />
+              </div>
 
               {/* Custom input */}
               <div className="custom-allergy-row">
