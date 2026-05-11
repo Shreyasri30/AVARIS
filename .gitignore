@@ -1,0 +1,31 @@
+# Environments
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+venv_avaris/
+.venv/
+
+# Node.js
+node_modules/
+dist/
+build/
+.npm/
+
+# Logs
+*.log
+
+# Database
+*.sqlite3
+*.db
+backend/database/environment_monitor.db
+
+# OS Files
+.DS_Store
+Thumbs.db
